@@ -1,0 +1,59 @@
+%% System Context & Component Architecture — University AI Compute Management Platform
+%% Companion to SPEC.md and ARCHITECTURE-SPINE.md. Actor/component names match
+%% ARCHITECTURE-SPINE.md's Design Paradigm and Structural Seed sections exactly.
+graph TB
+  subgraph Actors["People (Personas — see persona-archetypes.md)"]
+    Student([Student])
+    Teacher([Teacher])
+    LabOp([Lab Operator])
+    Admin([Academic Admin])
+    Researcher([Privileged Researcher])
+  end
+
+  subgraph Platform["GPU Governance Platform"]
+    WebApp["Next.js Web App<br/>(desktop-first; mobile = read-only companion view)"]
+
+    subgraph Driving["Driving Adapters — orchestrate, own all I/O sequencing"]
+      HTTP["FastAPI REST Router"]
+      WS["WebSocket Gateway"]
+    end
+
+    subgraph Core["Domain Core — pure, zero I/O (AD-9)"]
+      EVAL["evaluate(request, context, snapshot)<br/>-&gt; Outcome"]
+    end
+
+    subgraph Driven["Driven Adapters"]
+      PG["Postgres Adapter<br/>(allocation ledger — sole authority, AD-4)"]
+      K8SA["K8s / Kubeflow Adapter<br/>(job actuation + health-sync)"]
+      REDIS["Redis Adapter<br/>(cache + pub/sub relay)"]
+      IDA["Identity Adapter"]
+    end
+  end
+
+  subgraph External["External Systems (not owned by this platform)"]
+    K8S["Kubernetes Cluster<br/>GPU Fleet (device plugins) + Kubeflow Training Operator"]
+    DIR[("Institutional Directory<br/>(existing, external)")]
+  end
+
+  Student --> WebApp
+  Teacher --> WebApp
+  LabOp --> WebApp
+  Admin --> WebApp
+  Researcher --> WebApp
+
+  WebApp -- "REST" --> HTTP
+  WebApp -- "WebSocket (live status, CAP-8)" --> WS
+
+  HTTP -- "gather inputs, call core, commit result" --> EVAL
+  HTTP --> PG
+  HTTP --> K8SA
+  HTTP --> IDA
+  WS -- "subscribes" --> REDIS
+
+  PG -- "sole writer" --> REDIS
+  K8SA -- "health-sync writes into ledger (AD-4)" --> PG
+  K8SA -- "job actuation" --> K8S
+  IDA -- "context lookup" --> DIR
+
+  classDef external fill:transparent,stroke-dasharray: 4 3;
+  class K8S,DIR external;

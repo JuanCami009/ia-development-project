@@ -1,0 +1,60 @@
+%% Workload & Reservation State Machine — University AI Compute Management Platform
+%% Companion to SPEC.md and ARCHITECTURE-SPINE.md.
+%%
+%% Deliberately NOT shown: a "Scheduled"/queued holding state, or a "Preempted" state.
+%% AD-2 (SPEC CAP-4) requires every request to resolve synchronously, single-pass, to a
+%% terminal Outcome -- no holding, queuing, or rescheduling. SPEC's Assumptions section
+%% flags "no preemption of a running job" as a [RISKY] but current assumption. Both are
+%% explicit Non-Goals / Open Items this iteration, not omissions -- see glossary.md,
+%% "Deliberately absent terms".
+stateDiagram-v2
+
+  state "Reservation Lifecycle (CAP-5, CAP-6, AD-3, AD-8)" as ReservationLifecycle {
+    [*] --> Created : CAP-5 -- reservation created for an academic activity + time window
+    Created --> Active : window start reached
+    Active --> Expired : window end reached (AD-8 expiry sweeper commits the transition)
+    Expired --> [*]
+    note right of Active
+      While Active: any colliding general-use or
+      lower-priority request is denied
+      Denied: Reservation Conflict (CAP-6),
+      full precedence, no partial sharing
+      [RISKY assumption, SPEC.md]
+    end note
+  }
+
+  state "Accepted Job Execution (CAP-4, CAP-12, AD-2, AD-4)" as JobLifecycle {
+    [*] --> Accepted : evaluate() resolves Outcome=Accepted (single pass, no intermediate state)
+    Accepted --> Running : k8s adapter actuates job (pod / Kubeflow TrainJob)
+    Running --> Completed : job finishes successfully
+    Running --> Failed : job errors, or health-sync observes node failure (AD-4/AD-8)
+    Completed --> [*]
+    Failed --> [*]
+    note right of Accepted
+      No "Scheduled" holding state exists here:
+      a request that cannot be Accepted resolves
+      immediately to a Denied outcome instead (AD-2).
+      Running is never interrupted by a
+      later-arriving reservation (no preemption,
+      [RISKY] assumption, SPEC.md).
+    end note
+  }
+
+  state "Machine Status (CAP-8, AD-4, AD-8)" as MachineStatus {
+    [*] --> idle
+    idle --> reserved : reservation window starts (CAP-5)
+    reserved --> idle : window ends, no job ever started on it
+    idle --> busy : accepted request begins executing
+    reserved --> busy : accepted job begins executing within its reservation window
+    busy --> idle : job reaches Completed or Failed, resource released
+    idle --> failing : health-sync observes failure
+    busy --> failing : health-sync observes failure
+    reserved --> failing : health-sync observes failure
+    failing --> idle : health-sync observes recovery
+    note right of failing
+      failing is entered only via the k8s adapter's
+      health-sync write path into the Postgres
+      ledger (AD-4) -- never inferred by the core,
+      never a live K8s read at decision time.
+    end note
+  }
